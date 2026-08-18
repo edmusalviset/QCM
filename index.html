@@ -173,7 +173,7 @@
 <body>
 
 <h1>Correction QCM — commandes vocales</h1>
-<div class="sub">« correction v1 » (fond rouge) dicte le corrigé · « v1 » (fond vert) dicte les réponses · lettres A/B/C/D à la voix <i>ou</i> notes au clavier MIDI (la/si/do/ré) · « non répondu » (voix) / do dièse (MIDI) marque X · « faux » (voix) / mi (MIDI) annule la dernière saisie · « stop » termine la dictée</div>
+<div class="sub">« correction v1 » (fond rouge) dicte le corrigé · « v1 » (fond vert) dicte les réponses · lettres A/B/C/D à la voix <i>ou</i> notes au clavier MIDI (la/si/do/ré) · « non répondu » (voix) / do dièse (MIDI) marque X · « faux » (voix) / mi (MIDI) annule la dernière saisie · « ok » termine la dictée (et relit ce qui a été saisi) · « répéter les réponses » / « répéter le bilan » relisent la dernière relecture · vérification automatique du nombre de réponses face au corrigé</div>
 
 <div class="topbar">
   <button id="micBtn">🎙 Démarrer l'écoute</button>
@@ -182,6 +182,10 @@
   <button id="loadBtn">📂 Charger un corrigé</button>
   <input id="loadInput" type="file" accept="application/json,.json" style="display:none;">
   <button id="resetBtn">Réinitialiser tout</button>
+  <label style="font-size:.8rem; display:flex; align-items:center; gap:5px; color:var(--muted);">
+    <input id="readbackToggle" type="checkbox" checked> 🔊 Relecture audio après « ok » (+ questions fausses et note après les réponses)
+  </label>
+  <button id="stopReadbackBtn">⏹ Arrêter la relecture</button>
   <span class="status">Micro : <b id="micStatus">arrêté</b> — MIDI : <b id="midiStatus">non connecté</b> — Dernière commande : <b id="lastCmd">—</b></span>
 </div>
 
@@ -194,11 +198,11 @@
 <div id="versions"></div>
 
 <div class="tester">
-  <input id="testInput" type="text" placeholder="Simuler une commande vocale (ex: correction v1, A, B, C, faux, stop)">
+  <input id="testInput" type="text" placeholder="Simuler une commande vocale (ex: correction v1, A, B, C, faux, ok)">
   <button id="testBtn">Envoyer</button>
 </div>
 <div class="help">
-  Astuce : sans micro (ou pour tester sur ordinateur), tapez une commande ci-dessus et cliquez Envoyer — plusieurs lettres peuvent être séparées par des espaces ou virgules (ex : « A B C D B »). Pour une question sans réponse, dites ou tapez « non répondu » (marque X).<br>
+  Astuce : sans micro (ou pour tester sur ordinateur), tapez une commande ci-dessus et cliquez Envoyer — plusieurs lettres peuvent être séparées par des espaces ou virgules (ex : « A B C D B »). Pour une question sans réponse, dites ou tapez « non répondu » (marque X). Deux ou trois B dictés d'affilée sont reconnus même si Chrome les entend « bébé »/« bébés ».<br>
   <b>Clavier MIDI :</b> cliquez « Connecter le clavier MIDI » (une fois le clavier branché), puis jouez directement les notes pour saisir : <b>la</b>=A, <b>si</b>=B, <b>do</b>=C, <b>ré</b>=D, <b>do dièse</b>=non répondu (X), <b>mi</b>=faux (annule la dernière saisie). Fonctionne dans n'importe quelle octave, en complément ou à la place de la voix.<br>
   <b>Sauvegarde :</b> « 💾 Sauvegarder le corrigé » télécharge un fichier JSON avec le corrigé des 3 versions (réutilisable la fois suivante) ; « 📂 Charger un corrigé » le recharge instantanément — pratique pour ne pas re-dicter le corrigé à chaque classe. Seul le corrigé est sauvegardé, pas les réponses des élèves.<br>
   Vous pouvez aussi cliquer directement sur une cellule Correction/Réponse du tableau pour corriger une saisie manuellement (cycle A→B→C→D→vide).<br>
@@ -366,6 +370,12 @@
     }catch(e){}
   }
 
+  // double bip grave = signal d'erreur (nombre de réponses ≠ nombre de questions du corrigé)
+  function alertBeep(){
+    beep(200);
+    setTimeout(() => beep(200), 220);
+  }
+
   // ---------- interprétation des commandes ----------
   function normalize(s){
     return s.toLowerCase()
@@ -395,10 +405,38 @@
 
   function stopDictation(){
     if (!mode) return;
-    log(`fin de dictée pour <b>${mode.version}</b> (${mode.type})`, '■');
+    const finished = mode; // on garde une référence avant de vider `mode`
+    const arr = state[finished.version][finished.type].slice();
+
+    // vérification : lors de la fin de dictée des réponses, le nombre de réponses
+    // doit correspondre au nombre de questions du corrigé de la même version
+    if (finished.type === 'reponses'){
+      const corrLen = state[finished.version].correction.length;
+      if (corrLen > 0 && arr.length !== corrLen){
+        log(`⚠ ${arr.length} réponse(s) saisie(s) pour ${corrLen} question(s) au corrigé — dictée à recommencer`, '⚠');
+        alertBeep();
+        const msg = arr.length < corrLen
+          ? `Attention, il manque des réponses : ${arr.length} sur ${corrLen} questions. Recommence la dictée de ${finished.version} depuis le début.`
+          : `Attention, trop de réponses : ${arr.length} pour ${corrLen} questions. Recommence la dictée de ${finished.version} depuis le début.`;
+        speechToken++;
+        const myToken = speechToken;
+        speechSynthesis.cancel();
+        speakQueue([{ text: msg, rate: 1.1 }], 0, myToken);
+        // on repart à zéro, dictée réponses toujours active (badge vert) pour recommencer directement
+        state[finished.version].reponses = [];
+        mode = { version: finished.version, type: 'reponses' };
+        lastTouchedVersion = finished.version;
+        lastCmdEl.textContent = 'erreur : recommencer';
+        render();
+        return;
+      }
+    }
+
+    log(`fin de dictée pour <b>${finished.version}</b> (${finished.type})`, '■');
     mode = null;
-    lastCmdEl.textContent = 'stop';
+    lastCmdEl.textContent = 'ok';
     render();
+    if (readbackEnabled()) speakBack(finished.version, finished.type, arr);
   }
 
   function undoLast(){
@@ -417,6 +455,93 @@
     render();
   }
 
+  // ---------- relecture audio de la dictée (après "ok") ----------
+  const RATE_REPONSES = 1.7;  // débit de la liste des réponses (rapide)
+  const RATE_CORRECTION = 1.35; // débit de la liste du corrigé
+  const RATE_BILAN = 1.35;    // débit des questions fausses + note (inchangé)
+
+  // mémorise la dernière relecture réponses/bilan pour permettre "répéter les réponses" / "répéter le bilan"
+  let lastReadback = null; // { version, reponsesText, bilanText }
+  // jeton incrémenté à chaque nouvelle relecture / arrêt manuel, pour empêcher un
+  // "onend" en attente de relancer la suite d'une relecture déjà interrompue
+  let speechToken = 0;
+
+  function readbackEnabled(){
+    const cb = document.getElementById('readbackToggle');
+    return cb ? cb.checked : false;
+  }
+
+  function stopReadback(){
+    speechToken++;
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+  }
+
+  function speakBack(version, type, arr){
+    if (!('speechSynthesis' in window)) return;
+    if (!arr.length) return;
+    const label = type === 'correction' ? 'corrigé' : 'réponses';
+    const spoken = arr.map(l => l === 'X' ? 'non répondu' : l).join(', ');
+    const items = [{ text: `Relecture ${label} ${version} : ${spoken}.`, rate: type === 'correction' ? RATE_CORRECTION : RATE_REPONSES }];
+
+    // après la dictée des réponses, on enchaîne (après une pause) avec les
+    // questions fausses et la note, à un débit propre
+    if (type === 'reponses'){
+      const res = computeResult(version);
+      let bilanText;
+      if (res){
+        const wrongSpoken = res.wrong.length
+          ? `Questions fausses : ${res.wrong.join(', ')}.`
+          : 'Aucune erreur.';
+        const noteSpoken = `Note : ${fmtNote(res.note).replace('/20', ' sur 20')}.`;
+        bilanText = `${wrongSpoken} ${noteSpoken}`;
+      } else {
+        bilanText = 'Aucun corrigé disponible pour calculer la note.';
+      }
+      items.push({ text: bilanText, rate: RATE_BILAN });
+      lastReadback = { version, reponsesText: items[0].text, bilanText };
+    }
+
+    log(`relecture audio : "${items.map(p=>p.text).join(' … ')}"`, '🔊');
+    speechToken++;
+    const myToken = speechToken;
+    speechSynthesis.cancel(); // évite d'empiler d'anciennes relectures
+    speakQueue(items, 700, myToken);
+  }
+
+  function speakQueue(items, pauseMs, token){
+    if (!items.length) return;
+    const [first, ...rest] = items;
+    const utter = new SpeechSynthesisUtterance(first.text);
+    utter.lang = 'fr-FR';
+    utter.rate = first.rate;
+    if (rest.length){
+      utter.onend = () => {
+        if (token !== speechToken) return; // relecture interrompue/remplacée entre-temps
+        setTimeout(() => speakQueue(rest, pauseMs, token), pauseMs);
+      };
+    }
+    speechSynthesis.speak(utter);
+  }
+
+  function replayReponses(){
+    if (!lastReadback){ log('« répéter les réponses » ignoré (rien à répéter)'); return; }
+    speechToken++;
+    const myToken = speechToken;
+    speechSynthesis.cancel();
+    log(`répétition de la relecture réponses ${lastReadback.version}`, '🔁');
+    speakQueue([{ text: lastReadback.reponsesText, rate: RATE_REPONSES }], 0, myToken);
+  }
+
+  function replayBilan(){
+    if (!lastReadback || !lastReadback.bilanText){ log('« répéter le bilan » ignoré (rien à répéter)'); return; }
+    speechToken++;
+    const myToken = speechToken;
+    speechSynthesis.cancel();
+    log(`répétition du bilan ${lastReadback.version}`, '🔁');
+    speakQueue([{ text: lastReadback.bilanText, rate: RATE_BILAN }], 0, myToken);
+  }
+
+
   function processUtterance(raw){
     const t = normalize(raw);
     if (!t) return;
@@ -431,8 +556,20 @@
     while (i < tokens.length){
       const tok = tokens[i];
 
-      // "stop" tolère les variantes mal transcrites (top, stope, stoppe...)
-      if (/^stop+e?$/.test(tok) || tok === 'top'){ stopDictation(); i++; continue; }
+      // "ok" termine la dictée (remplace "stop", moins bien reconnu). "stop" reste toléré en secours.
+      if (/^ok(ay)?$/.test(tok) || /^stop+e?$/.test(tok) || tok === 'top'){ stopDictation(); i++; continue; }
+
+      // "répéter les réponses" / "répéter le bilan"
+      if (/^repet/.test(tok)){
+        let found = null, consumed = 1;
+        for (let k = 1; k <= 3 && (i + k) < tokens.length; k++){
+          const nt = tokens[i + k];
+          if (/^reponse/.test(nt)){ found = 'reponses'; consumed = k + 1; break; }
+          if (/^bilan/.test(nt)){ found = 'bilan'; consumed = k + 1; break; }
+        }
+        if (found === 'reponses'){ replayReponses(); i += consumed; continue; }
+        if (found === 'bilan'){ replayBilan(); i += consumed; continue; }
+      }
 
       // "faux" tolère quelques variantes proches
       if (tok === 'faux' || tok === 'faut'){ undoLast(); i++; continue; }
@@ -458,6 +595,11 @@
       // "vX" seule (réponses)
       const mv = tok.match(/^v\s*([123])$/);
       if (mv){ startDictation('V'+mv[1], 'reponses'); i++; continue; }
+
+      // pièges fréquents de transcription : "B, B" (ou "B, B, B") dicté vite est souvent
+      // entendu comme "bébé" / "bébés" par la reconnaissance vocale au lieu de deux/trois B
+      if (tok === 'bebe'){ pushLetter('B'); pushLetter('B'); i++; continue; }
+      if (tok === 'bebes'){ pushLetter('B'); pushLetter('B'); pushLetter('B'); i++; continue; }
 
       // lettre isolée (A/B/C/D/X, avec variantes phonétiques courantes)
       const letter = LETTER_MAP[tok];
@@ -491,21 +633,24 @@
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
-    let pendingInterim = '';
+    // suivi des segments provisoires par index (au lieu d'une simple chaîne écrasée à
+    // chaque événement) : évite de perdre un fragment si plusieurs segments provisoires
+    // coexistent au moment où le micro coupe la session
+    let pendingByIndex = {};
 
     recognition.onresult = (e) => {
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++){
         if (e.results[i].isFinal){
           processUtterance(e.results[i][0].transcript);
-          pendingInterim = '';
+          delete pendingByIndex[i];
         } else {
           interim += e.results[i][0].transcript;
+          pendingByIndex[i] = e.results[i][0].transcript;
         }
       }
       if (interim.trim()){
         liveText.textContent = interim.trim();
-        pendingInterim = interim.trim();
       }
     };
     recognition.onerror = (e) => {
@@ -516,11 +661,16 @@
     };
     recognition.onend = () => {
       // Si du texte provisoire n'a jamais été finalisé avant la coupure du micro,
-      // on le traite quand même : sinon la dernière commande/lettre dictée est perdue.
-      if (pendingInterim){
-        log('finalisation forcée (session coupée avant la fin) : "' + pendingInterim + '"');
-        processUtterance(pendingInterim);
-        pendingInterim = '';
+      // on le traite quand même (dans l'ordre des segments) : sinon la fin de la
+      // dictée est perdue.
+      const indices = Object.keys(pendingByIndex).map(Number).sort((a,b) => a-b);
+      if (indices.length){
+        const rest = indices.map(i => pendingByIndex[i]).join(' ').trim();
+        if (rest){
+          log('finalisation forcée (session coupée avant la fin) : "' + rest + '"');
+          processUtterance(rest);
+        }
+        pendingByIndex = {};
       }
       // Pas de relance automatique : sur une page ouverte en local (file://), Chrome ne
       // mémorise pas l'autorisation micro et une relance auto provoquerait une boucle de
@@ -563,6 +713,11 @@
     mode = null;
     log('réinitialisation complète', '⟲');
     render();
+  });
+
+  document.getElementById('stopReadbackBtn').addEventListener('click', () => {
+    stopReadback();
+    log('relecture interrompue', '⏹');
   });
 
   // ---------- sauvegarde / import du corrigé (V1/V2/V3) ----------
