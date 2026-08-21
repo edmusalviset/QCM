@@ -173,10 +173,13 @@
 <body>
 
 <h1>Correction QCM — commandes vocales</h1>
-<div class="sub">« correction v1 » (fond rouge) dicte le corrigé · « v1 » (fond vert) dicte les réponses · lettres A/B/C/D à la voix <i>ou</i> notes au clavier MIDI (la/si/do/ré) · « non répondu » (voix) / do dièse (MIDI) marque X · « faux » (voix) / mi (MIDI) annule la dernière saisie · « ok » termine la dictée (et relit ce qui a été saisi) · « répéter les réponses » / « répéter le bilan » relisent la dernière relecture · vérification automatique du nombre de réponses face au corrigé</div>
+<div class="sub">Identifiant : <b>clic</b> = dicter les réponses (vert) · <b>double clic</b> = dicter le corrigé (rouge) · <b>clic</b> sur le badge actif ou « ok »/sol termine · « correction v1 » (voix, fond rouge) dicte le corrigé · « v1 » (voix, fond vert) dicte les réponses · lettres A/B/C/D à la voix <i>ou</i> notes au clavier MIDI (la/si/do/ré) · « non répondu » (voix) / do dièse (MIDI) marque X · « faux » (voix) / mi (MIDI) annule la dernière saisie · « ok » (voix) / sol (MIDI) termine la dictée (et relit ce qui a été saisi) · « répéter les réponses » / « répéter le bilan » relisent la dernière relecture · vérification automatique du nombre de réponses face au corrigé</div>
 
 <div class="topbar">
   <button id="micBtn">🎙 Démarrer l'écoute</button>
+  <label style="font-size:.8rem; display:flex; align-items:center; gap:5px; color:var(--muted);">
+    <input id="autoRestartToggle" type="checkbox" checked> 🔁 Relance auto du micro
+  </label>
   <button id="midiBtn">🎹 Connecter le clavier MIDI</button>
   <button id="saveBtn">💾 Sauvegarder le corrigé</button>
   <button id="loadBtn">📂 Charger un corrigé</button>
@@ -203,7 +206,7 @@
 </div>
 <div class="help">
   Astuce : sans micro (ou pour tester sur ordinateur), tapez une commande ci-dessus et cliquez Envoyer — plusieurs lettres peuvent être séparées par des espaces ou virgules (ex : « A B C D B »). Pour une question sans réponse, dites ou tapez « non répondu » (marque X). Deux ou trois B dictés d'affilée sont reconnus même si Chrome les entend « bébé »/« bébés ».<br>
-  <b>Clavier MIDI :</b> cliquez « Connecter le clavier MIDI » (une fois le clavier branché), puis jouez directement les notes pour saisir : <b>la</b>=A, <b>si</b>=B, <b>do</b>=C, <b>ré</b>=D, <b>do dièse</b>=non répondu (X), <b>mi</b>=faux (annule la dernière saisie). Fonctionne dans n'importe quelle octave, en complément ou à la place de la voix.<br>
+  <b>Clavier MIDI :</b> cliquez « Connecter le clavier MIDI » (une fois le clavier branché), puis jouez directement les notes pour saisir : <b>la</b>=A, <b>si</b>=B, <b>do</b>=C, <b>ré</b>=D, <b>do dièse</b>=non répondu (X), <b>mi</b>=faux (annule la dernière saisie), <b>sol</b>=termine la dictée (comme « ok »/stop). Fonctionne dans n'importe quelle octave, en complément ou à la place de la voix.<br>
   <b>Sauvegarde :</b> « 💾 Sauvegarder le corrigé » télécharge un fichier JSON avec le corrigé des 3 versions (réutilisable la fois suivante) ; « 📂 Charger un corrigé » le recharge instantanément — pratique pour ne pas re-dicter le corrigé à chaque classe. Seul le corrigé est sauvegardé, pas les réponses des élèves.<br>
   Vous pouvez aussi cliquer directement sur une cellule Correction/Réponse du tableau pour corriger une saisie manuellement (cycle A→B→C→D→vide).<br>
   Le micro nécessite une connexion HTTPS (fonctionne sur GitHub Pages) et un navigateur type Chrome. <b>Important :</b> si le fichier est ouvert en local (adresse commençant par <code>file://</code>), Chrome redemande l'autorisation micro à chaque redémarrage de l'écoute — héberger la page (GitHub Pages) évite ce problème.
@@ -294,9 +297,10 @@
       const isCorrActive = mode && mode.version === v && mode.type === 'correction';
       const isRepActive  = mode && mode.version === v && mode.type === 'reponses';
       badgeWrap.innerHTML = `
-        <div class="badge ${isCorrActive?'correction':''} ${isRepActive?'reponses':''}">${v}</div>
-        <div class="badge-label">${isCorrActive ? 'correction…' : (isRepActive ? 'réponses…' : 'inactif')}</div>
+        <div class="badge ${isCorrActive?'correction':''} ${isRepActive?'reponses':''}" style="cursor:pointer;">${v}</div>
+        <div class="badge-label">${isCorrActive ? 'correction…' : (isRepActive ? 'réponses…' : 'inactif (clic=réponses, double-clic=corrigé)')}</div>
       `;
+      attachBadgeEvents(badgeWrap.querySelector('.badge'), v);
       block.appendChild(badgeWrap);
 
       const tw = document.createElement('div');
@@ -351,6 +355,45 @@
       arr[i] = LETTERS[idx+1];
     }
     render();
+  }
+
+  // ---------- badges V1/V2/V3 : clic = réponses, double clic = corrigé ----------
+  // Détection manuelle du double-clic via l'événement "click" uniquement (plus fiable
+  // que "dblclick" sur les supports tactiles, cf. version tactile de l'application).
+  const clickState = {}; // v -> { count, timer }
+  function attachBadgeEvents(el, v){
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      const cs = clickState[v] || (clickState[v] = { count: 0, timer: null });
+      cs.count++;
+      if (cs.timer) clearTimeout(cs.timer);
+      cs.timer = setTimeout(() => {
+        if (cs.count >= 2) onBadgeDouble(v);
+        else onBadgeSingle(v);
+        cs.count = 0;
+        cs.timer = null;
+      }, 280);
+    });
+  }
+
+  function onBadgeSingle(v){
+    if (mode && mode.version === v){
+      stopDictation();
+    } else if (!mode){
+      startDictation(v, 'reponses');
+    } else {
+      log(`termine d'abord la dictée en cours sur ${mode.version}`);
+    }
+  }
+
+  function onBadgeDouble(v){
+    if (mode && mode.version === v){
+      stopDictation();
+    } else if (!mode){
+      startDictation(v, 'correction');
+    } else {
+      log(`termine d'abord la dictée en cours sur ${mode.version}`);
+    }
   }
 
   // ---------- son ----------
@@ -653,6 +696,9 @@
         liveText.textContent = interim.trim();
       }
     };
+    let sessionStart = 0;
+    let quickEndCount = 0;
+    recognition.onstart = () => { sessionStart = Date.now(); };
     recognition.onerror = (e) => {
       log('erreur reconnaissance : ' + e.error);
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){
@@ -672,14 +718,40 @@
         }
         pendingByIndex = {};
       }
-      // Pas de relance automatique : sur une page ouverte en local (file://), Chrome ne
-      // mémorise pas l'autorisation micro et une relance auto provoquerait une boucle de
-      // demandes d'autorisation. L'utilisateur relance manuellement en cliquant le bouton.
-      listening = false;
-      micStatus.textContent = 'arrêté — reclique pour continuer';
-      micBtn.classList.remove('on');
-      micBtn.textContent = "🎙 Reprendre l'écoute";
-      log('micro arrêté (silence ou fin de phrase) — clique sur le bouton pour continuer la dictée');
+
+      const autoRestart = document.getElementById('autoRestartToggle').checked;
+      if (listening && autoRestart){
+        // Sécurité anti-boucle : si la session se coupe presque instantanément et de
+        // façon répétée (signe probable d'un souci d'autorisation redemandée en boucle,
+        // typiquement en local file://), on arrête de relancer automatiquement.
+        const elapsed = Date.now() - sessionStart;
+        quickEndCount = (elapsed < 800) ? quickEndCount + 1 : 0;
+        if (quickEndCount >= 3){
+          listening = false;
+          log('⚠ le micro se coupe immédiatement à répétition — relance auto désactivée pour éviter une boucle. Vérifie l\'autorisation micro du site (HTTPS requis) puis reclique sur le bouton.');
+          micStatus.textContent = 'arrêté (voir journal)';
+          micBtn.classList.remove('on');
+          micBtn.textContent = "🎙 Démarrer l'écoute";
+          return;
+        }
+        micStatus.textContent = 'redémarrage…';
+        setTimeout(() => {
+          if (!listening) return;
+          try {
+            recognition.start();
+            micStatus.textContent = 'actif';
+          } catch(err){
+            log('échec du redémarrage micro : ' + err.message);
+            micStatus.textContent = 'erreur';
+          }
+        }, 250);
+      } else {
+        listening = false;
+        micStatus.textContent = 'arrêté — reclique pour continuer';
+        micBtn.classList.remove('on');
+        micBtn.textContent = "🎙 Reprendre l'écoute";
+        log('micro arrêté (silence ou fin de phrase) — clique sur le bouton pour continuer la dictée');
+      }
     };
   } else {
     micBtn.disabled = true;
@@ -815,7 +887,8 @@
     0:  () => pushLetter('C'),  // do
     2:  () => pushLetter('D'),  // ré
     1:  () => pushLetter('X'),  // do dièse -> non répondu
-    4:  () => undoLast()        // mi -> faux (annule la dernière saisie)
+    4:  () => undoLast(),       // mi -> faux (annule la dernière saisie)
+    7:  () => stopDictation()   // sol -> termine la dictée, comme "ok"/stop
   };
 
   function handleMidiMessage(e){
