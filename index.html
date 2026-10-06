@@ -173,7 +173,7 @@
 <body>
 
 <h1>Correction QCM — commandes vocales</h1>
-<div class="sub">Identifiant : <b>clic</b> = dicter les réponses (vert) · <b>double clic</b> = dicter le corrigé (rouge) · <b>clic</b> sur le badge actif ou « ok »/sol termine · « correction v1 » (voix, fond rouge) dicte le corrigé · « v1 » (voix, fond vert) dicte les réponses · lettres A/B/C/D à la voix <i>ou</i> notes au clavier MIDI (la/si/do/ré) · « non répondu » (voix) / do dièse (MIDI) marque X · « faux » (voix) / mi (MIDI) annule la dernière saisie · « ok » (voix) / sol (MIDI) termine la dictée (et relit ce qui a été saisi) · « répéter les réponses » / « répéter le bilan » relisent la dernière relecture · vérification automatique du nombre de réponses face au corrigé</div>
+<div class="sub">Identifiant : <b>clic</b> = dicter les réponses (vert) · <b>double clic</b> = dicter le corrigé (rouge) · <b>clic</b> sur le badge actif ou « ok »/sol termine · « correction v1 » (voix, fond rouge) dicte le corrigé · « saisie v1 » (voix) / fa♯ (MIDI, double appui=corrigé) dicte les réponses de V1 (idem sol♯→V2, la♯→V3) · lettres A/B/C/D à la voix <i>ou</i> notes au clavier MIDI (la/si/do/ré) · « non répondu » (voix) / do dièse (MIDI) marque X · « faux » (voix) / mi (MIDI) annule la dernière saisie · « ok » (voix) / sol (MIDI) termine la dictée (et relit ce qui a été saisi) · « répéter les réponses » / « répéter le bilan » relisent la dernière relecture · vérification automatique du nombre de réponses face au corrigé</div>
 
 <div class="topbar">
   <button id="micBtn">🎙 Démarrer l'écoute</button>
@@ -206,7 +206,7 @@
 </div>
 <div class="help">
   Astuce : sans micro (ou pour tester sur ordinateur), tapez une commande ci-dessus et cliquez Envoyer — plusieurs lettres peuvent être séparées par des espaces ou virgules (ex : « A B C D B »). Pour une question sans réponse, dites ou tapez « non répondu » (marque X). Deux ou trois B dictés d'affilée sont reconnus même si Chrome les entend « bébé »/« bébés ».<br>
-  <b>Clavier MIDI :</b> cliquez « Connecter le clavier MIDI » (une fois le clavier branché), puis jouez directement les notes pour saisir : <b>la</b>=A, <b>si</b>=B, <b>do</b>=C, <b>ré</b>=D, <b>do dièse</b>=non répondu (X), <b>mi</b>=faux (annule la dernière saisie), <b>sol</b>=termine la dictée (comme « ok »/stop). Fonctionne dans n'importe quelle octave, en complément ou à la place de la voix.<br>
+  <b>Clavier MIDI :</b> cliquez « Connecter le clavier MIDI » (une fois le clavier branché), puis jouez directement les notes pour saisir : <b>la</b>=A, <b>si</b>=B, <b>do</b>=C, <b>ré</b>=D, <b>do dièse</b>=non répondu (X), <b>mi</b>=faux (annule la dernière saisie), <b>sol</b>=termine la dictée (comme « ok »/stop), <b>fa dièse</b>=démarre la saisie des réponses V1 (double appui rapide=corrigé V1), <b>sol dièse</b>=idem V2, <b>la dièse</b>=idem V3. Fonctionne dans n'importe quelle octave, en complément ou à la place de la voix.<br>
   <b>Sauvegarde :</b> « 💾 Sauvegarder le corrigé » télécharge un fichier JSON avec le corrigé des 3 versions (réutilisable la fois suivante) ; « 📂 Charger un corrigé » le recharge instantanément — pratique pour ne pas re-dicter le corrigé à chaque classe. Seul le corrigé est sauvegardé, pas les réponses des élèves.<br>
   Vous pouvez aussi cliquer directement sur une cellule Correction/Réponse du tableau pour corriger une saisie manuellement (cycle A→B→C→D→vide).<br>
   Le micro nécessite une connexion HTTPS (fonctionne sur GitHub Pages) et un navigateur type Chrome. <b>Important :</b> si le fichier est ouvert en local (adresse commençant par <code>file://</code>), Chrome redemande l'autorisation micro à chaque redémarrage de l'écoute — héberger la page (GitHub Pages) évite ce problème.
@@ -527,21 +527,24 @@
     const items = [{ text: `Relecture ${label} ${version} : ${spoken}.`, rate: type === 'correction' ? RATE_CORRECTION : RATE_REPONSES }];
 
     // après la dictée des réponses, on enchaîne (après une pause) avec les
-    // questions fausses et la note, à un débit propre
+    // questions fausses, puis (après une pause plus courte) la note
+    let bilanParts;
     if (type === 'reponses'){
       const res = computeResult(version);
-      let bilanText;
       if (res){
         const wrongSpoken = res.wrong.length
           ? `Questions fausses : ${res.wrong.join(', ')}.`
           : 'Aucune erreur.';
         const noteSpoken = `Note : ${fmtNote(res.note).replace('/20', ' sur 20')}.`;
-        bilanText = `${wrongSpoken} ${noteSpoken}`;
+        bilanParts = [
+          { text: wrongSpoken, rate: RATE_BILAN, pauseAfter: 350 },
+          { text: noteSpoken, rate: RATE_BILAN }
+        ];
       } else {
-        bilanText = 'Aucun corrigé disponible pour calculer la note.';
+        bilanParts = [{ text: 'Aucun corrigé disponible pour calculer la note.', rate: RATE_BILAN }];
       }
-      items.push({ text: bilanText, rate: RATE_BILAN });
-      lastReadback = { version, reponsesText: items[0].text, bilanText };
+      items.push(...bilanParts);
+      lastReadback = { version, reponsesText: items[0].text, bilanParts };
     }
 
     log(`relecture audio : "${items.map(p=>p.text).join(' … ')}"`, '🔊');
@@ -558,9 +561,10 @@
     utter.lang = 'fr-FR';
     utter.rate = first.rate;
     if (rest.length){
+      const nextPause = (first.pauseAfter !== undefined) ? first.pauseAfter : pauseMs;
       utter.onend = () => {
         if (token !== speechToken) return; // relecture interrompue/remplacée entre-temps
-        setTimeout(() => speakQueue(rest, pauseMs, token), pauseMs);
+        setTimeout(() => speakQueue(rest, pauseMs, token), nextPause);
       };
     }
     speechSynthesis.speak(utter);
@@ -576,12 +580,12 @@
   }
 
   function replayBilan(){
-    if (!lastReadback || !lastReadback.bilanText){ log('« répéter le bilan » ignoré (rien à répéter)'); return; }
+    if (!lastReadback || !lastReadback.bilanParts){ log('« répéter le bilan » ignoré (rien à répéter)'); return; }
     speechToken++;
     const myToken = speechToken;
     speechSynthesis.cancel();
     log(`répétition du bilan ${lastReadback.version}`, '🔁');
-    speakQueue([{ text: lastReadback.bilanText, rate: RATE_BILAN }], 0, myToken);
+    speakQueue(lastReadback.bilanParts, 350, myToken);
   }
 
 
@@ -635,9 +639,15 @@
         if (digit){ startDictation('V'+digit, 'correction'); i += consumed; continue; }
       }
 
-      // "vX" seule (réponses)
-      const mv = tok.match(/^v\s*([123])$/);
-      if (mv){ startDictation('V'+mv[1], 'reponses'); i++; continue; }
+      // "saisie vX" (réponses) — remplace "vX" seule, mieux reconnue à la voix
+      if (tok === 'saisie'){
+        let digit = null, consumed = 1;
+        if (tokens[i+1]){
+          const m2 = tokens[i+1].match(/^v?\s*([123])$/);
+          if (m2){ digit = m2[1]; consumed = 2; }
+        }
+        if (digit){ startDictation('V'+digit, 'reponses'); i += consumed; continue; }
+      }
 
       // pièges fréquents de transcription : "B, B" (ou "B, B, B") dicté vite est souvent
       // entendu comme "bébé" / "bébés" par la reconnaissance vocale au lieu de deux/trois B
@@ -881,6 +891,24 @@
 
   const MIDI_NOTE_NAMES = {0:'do',1:'do#',2:'ré',3:'ré#',4:'mi',5:'fa',6:'fa#',7:'sol',8:'sol#',9:'la',10:'la#',11:'si'};
 
+  // fa♯/sol♯/la♯ se comportent comme les badges V1/V2/V3 : un appui simple démarre
+  // la saisie des réponses, un double appui rapproché démarre celle du corrigé —
+  // même détection manuelle (comptage + délai) que pour le clic/double-clic des badges.
+  const midiClickState = {};
+  function midiBadgeLikeAction(version){
+    return () => {
+      const cs = midiClickState[version] || (midiClickState[version] = { count: 0, timer: null });
+      cs.count++;
+      if (cs.timer) clearTimeout(cs.timer);
+      cs.timer = setTimeout(() => {
+        if (cs.count >= 2) onBadgeDouble(version);
+        else onBadgeSingle(version);
+        cs.count = 0;
+        cs.timer = null;
+      }, 280);
+    };
+  }
+
   const MIDI_ACTIONS = {
     9:  () => pushLetter('A'),  // la
     11: () => pushLetter('B'),  // si
@@ -888,7 +916,10 @@
     2:  () => pushLetter('D'),  // ré
     1:  () => pushLetter('X'),  // do dièse -> non répondu
     4:  () => undoLast(),       // mi -> faux (annule la dernière saisie)
-    7:  () => stopDictation()   // sol -> termine la dictée, comme "ok"/stop
+    7:  () => stopDictation(),  // sol -> termine la dictée, comme "ok"/stop
+    6:  midiBadgeLikeAction('V1'),  // fa dièse : 1 appui = saisie réponses V1, double appui = corrigé V1
+    8:  midiBadgeLikeAction('V2'),  // sol dièse : idem V2
+    10: midiBadgeLikeAction('V3')   // la dièse : idem V3
   };
 
   function handleMidiMessage(e){
